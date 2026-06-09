@@ -4,8 +4,9 @@ import { cursor } from './cursor.js';
 import { geminiCli } from './gemini-cli.js';
 import { openCode } from './opencode.js';
 import type { Installer } from './types.js';
+import { zed } from './zed.js';
 
-export type IdeName = 'claude-code' | 'gemini-cli' | 'opencode' | 'codex' | 'cursor';
+export type IdeName = 'claude-code' | 'gemini-cli' | 'opencode' | 'codex' | 'cursor' | 'zed';
 
 export const installers: Record<IdeName, Installer> = {
   'claude-code': claudeCode,
@@ -13,6 +14,7 @@ export const installers: Record<IdeName, Installer> = {
   opencode: openCode,
   codex,
   cursor,
+  zed,
 };
 
 export function getInstaller(name: string): Installer {
@@ -21,4 +23,4 @@ export function getInstaller(name: string): Installer {
   return found;
 }
 
-export type { Installer, InstallContext } from './types.js';
+export type { InstallContext, Installer } from './types.js';

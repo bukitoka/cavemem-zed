@@ -8,7 +8,7 @@
 
 [![npm](https://img.shields.io/npm/v/cavemem?style=flat&color=yellow)](https://www.npmjs.com/package/cavemem) [![Stars](https://img.shields.io/github/stars/JuliusBrussee/cavemem?style=flat&color=yellow)](https://github.com/JuliusBrussee/cavemem/stargazers) [![Last Commit](https://img.shields.io/github/last-commit/JuliusBrussee/cavemem?style=flat)](https://github.com/JuliusBrussee/cavemem/commits/main) [![License](https://img.shields.io/github/license/JuliusBrussee/cavemem?style=flat)](LICENSE)
 
-[Install](#install) • [How it works](#how-it-works) • [CLI](#cli) • [MCP](#mcp) • [Settings](#settings)
+[Install](#install) • [How it works](#how-it-works) • [Zed](#zed) • [CLI](#cli) • [MCP](#mcp) • [Settings](#settings)
 
 </div>
 
@@ -22,10 +22,7 @@
 
 
 ---
-
-Cross-agent persistent memory for coding assistants. Hooks fire at session boundaries, compress observations with the caveman grammar (~75% fewer prose tokens, code and paths preserved byte-for-byte), and write to local SQLite. Agents query their own history through three MCP tools. No network. No cloud.
-
-**Supports:** Claude Code · Cursor · Gemini CLI · OpenCode · Codex
+**Supports:** Claude Code · Cursor · Gemini CLI · OpenCode · Codex · **Zed**
 
 - **Persistent memory across sessions.** Hooks capture what happened; the store keeps it.
 - **Compressed at rest.** Deterministic caveman grammar, round-trip-guaranteed expansion for humans.
@@ -33,7 +30,7 @@ Cross-agent persistent memory for coding assistants. Hooks fire at session bound
 - **Hybrid search.** SQLite FTS5 keyword + local vector index, combined with a tunable ranker.
 - **Local by default.** No network calls. Optional remote embedding providers via config.
 - **Web viewer.** Read-only UI at `http://localhost:37777` for browsing sessions in human-readable form.
-- **Cross-IDE installers.** Claude Code, Gemini CLI, OpenCode, Codex, Cursor — one command each.
+- **Cross-IDE installers.** Claude Code, Gemini CLI, OpenCode, Codex, Cursor, Zed — one command each.
 - **Privacy-aware.** `<private>...</private>` stripped at write boundary. Path globs exclude whole directories.
 
 ---
@@ -43,7 +40,7 @@ Cross-agent persistent memory for coding assistants. Hooks fire at session bound
 ```sh
 npm install -g cavemem
 cavemem install                    # Claude Code
-cavemem install --ide cursor       # cursor | gemini-cli | opencode | codex
+cavemem install --ide cursor       # cursor | gemini-cli | opencode | codex | zed
 cavemem status                     # see wiring + embedding backfill
 cavemem viewer                     # open http://127.0.0.1:37777
 ```
@@ -88,6 +85,65 @@ Code blocks, URLs, paths, identifiers, and version numbers are never touched. Ho
 | `cavemem reindex` | Rebuild FTS5 + vector index |
 | `cavemem export <out.jsonl>` | Dump observations to JSONL |
 | `cavemem mcp` | Start MCP server (stdio) |
+| `cavemem serve` | Start MCP server with auto session lifecycle + agent-driven recording (used by Zed) |
+
+---
+
+## Local development
+
+When hacking on cavemem itself, run from the local build:
+
+```sh
+pnpm build
+node apps/cli/dist/index.js --help
+```
+
+### Checking status from a local build
+
+After building, check wiring, database counts, embedding backfill, and worker health with:
+
+```sh
+node apps/cli/dist/index.js status
+```
+
+This reports the same dashboard as a globally-installed `cavemem status`:
+
+```
+cavemem status
+
+settings:   /Users/me/.cavemem/settings.json ✓
+data dir:   /Users/me/.cavemem/data
+db:         /Users/me/.cavemem/data/data.db ✓ (87 observations, 2 sessions)
+ides:       claude_code
+embedding:  local / @cfcaicedo/all-minilm-l6-v2-q4
+backfill:   87 / 87 (100%)  last batch 5m ago
+worker:     running (pid 5421, up 1h)  http://127.0.0.1:37777
+```
+
+| Field | What it tells you |
+|-------|-------------------|
+| **settings** | Config file path — `✓` if present, `default` if not yet created |
+| **data dir** | Where the SQLite database lives |
+| **db** | Database health, observation count, session count |
+| **ides** | Which IDE integrations are active |
+| **embedding** | Embedding provider + model |
+| **backfill** | Embedding progress — `142 / 142 (100%)` means fully indexed |
+| **worker** | Whether the background worker is running, its pid and uptime |
+
+To point status at a different data directory (useful during development with `CAVEMEM_HOME`):
+
+```sh
+CAVEMEM_HOME=$PWD/.cavemem-dev node apps/cli/dist/index.js status
+```
+
+### Linking globally (alternative)
+
+```sh
+cd apps/cli && pnpm link --global
+cavemem status
+```
+
+This makes the `cavemem` command available globally from your local build.
 
 ---
 
@@ -101,6 +157,75 @@ Progressive disclosure: `search` and `timeline` return compact results; `get_obs
 | `timeline(session_id, around_id?, limit?)` | `[{id, kind, ts}]` |
 | `get_observations(ids[], expand?)` | Full bodies, expanded by default |
 | `list_sessions(limit?)` | `[{id, ide, cwd, started_at, ended_at}]` |
+| `record_observation(kind, content)` *(Zed only)* | `{ok: true}` — agent-driven push; call after every significant action |
+
+---
+
+## Zed
+
+Zed doesn't have a native hook system (no `SessionStart`, `PostToolUse`, etc.), so cavemem uses a different approach: **agent-driven capture** via `cavemem serve`.
+
+### How it works
+
+```
+Zed launches the context server
+    ↓
+cavemem serve starts
+    ├─ auto-generates a session ID
+    ├─ fires session-start
+    ├─ starts the MCP server with 5 tools
+    │     (search, timeline, get_observations, list_sessions, record_observation)
+    └─ on shutdown → fires session-end
+            ↑
+    The AI agent automatically calls record_observation
+    after every prompt, tool use, and turn summary
+```
+
+No IDE hooks needed. The agent pushes observations itself via the `record_observation` MCP tool, which is described in its tool definition to call automatically after every significant action.
+
+### Usage
+
+```sh
+cavemem install --ide zed
+# Restart Zed. That's it.
+```
+
+### Local development build
+
+If you're working on cavemem itself (this repo), no global install needed — see [Local development](#local-development) for general build + status commands. For Zed specifically:
+
+```sh
+pnpm build
+node apps/cli/dist/index.js install --ide zed
+# Restart Zed.
+```
+
+The installer points the context server at your local `dist/index.js`, so changes
+are picked up after `pnpm build` + Zed restart.
+
+After some sessions accumulate, check that everything is wired correctly:
+
+```sh
+node apps/cli/dist/index.js status
+# Look for: db ✓, ides: zed, backfill progress, worker running
+```
+
+The installer safely merges into your existing `~/.config/zed/settings.json`:
+- Handles JSONC (comments and trailing commas)
+- Preserves all existing settings
+- Creates a backup before writing
+
+### MCP tools available in Zed
+
+| Tool | Purpose |
+|------|---------|
+| `search` | Pull: query past memory |
+| `timeline` | Pull: browse session history |
+| `get_observations` | Pull: read full observation bodies |
+| `list_sessions` | Pull: see all sessions |
+| `record_observation` | **Push** (agent-driven): the agent calls this automatically to store prompts, tool results, and summaries |
+
+Observations stored from Zed live in the same local SQLite database as observations from Claude Code, Cursor, or any other IDE. All agents see the full history.
 
 ---
 

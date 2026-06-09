@@ -12,6 +12,7 @@ import { registerLifecycleCommands } from './commands/lifecycle.js';
 import { registerMcpCommand } from './commands/mcp.js';
 import { registerReindexCommand } from './commands/reindex.js';
 import { registerSearchCommand } from './commands/search.js';
+import { registerServeCommand } from './commands/serve.js';
 import { registerStatusCommand } from './commands/status.js';
 import { registerUninstallCommand } from './commands/uninstall.js';
 import { registerWorkerCommand } from './commands/worker.js';
@@ -33,6 +34,7 @@ export function createProgram(): Command {
   registerWorkerCommand(program);
   registerMcpCommand(program);
   registerSearchCommand(program);
+  registerServeCommand(program);
   registerCompressCommands(program);
   registerExportCommand(program);
   registerHookCommand(program);

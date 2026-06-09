@@ -16,16 +16,20 @@ import { z } from 'zod';
  * - get_observations: full bodies by ID
  * - list_sessions: recent sessions for navigation
  *
+ * When a `sessionId` is provided, the server also registers agent-driven
+ * recording tools (record_prompt, record_tool_use, record_summary) that
+ * the AI agent can call to push observations into memory automatically.
+ *
  * Embedder is loaded lazily on first search — keeps MCP handshake fast.
  */
-export function buildServer(store: MemoryStore, settings: Settings): McpServer {
+export function buildServer(store: MemoryStore, settings: Settings, sessionId?: string): McpServer {
   const server = new McpServer({
     name: 'cavemem',
     version: '0.1.0',
   });
 
   // tri-state: undefined = not yet attempted; null = unavailable (provider=none or load failed)
-  let embedder: Embedder | null | undefined = undefined;
+  let embedder: Embedder | null | undefined;
   const resolveEmbedder = async (): Promise<Embedder | null> => {
     if (embedder !== undefined) return embedder;
     try {
@@ -42,7 +46,10 @@ export function buildServer(store: MemoryStore, settings: Settings): McpServer {
   server.tool(
     'search',
     'Search memory. Returns compact hits — fetch full bodies via get_observations.',
-    { query: z.string().min(1), limit: z.number().int().positive().max(50).optional() },
+    {
+      query: z.string().min(1),
+      limit: z.number().int().positive().max(50).optional(),
+    },
     async ({ query, limit }) => {
       const e = (await resolveEmbedder()) ?? undefined;
       const hits = await store.search(query, limit, e);
@@ -113,15 +120,51 @@ export function buildServer(store: MemoryStore, settings: Settings): McpServer {
     },
   );
 
+  // ── Agent-driven recording tools ──────────────────────────────────────────
+  // These are only registered when a sessionId is provided (i.e. when the
+  // server is launched via `cavemem serve`). The AI agent is expected to call
+  // them automatically as it works, so observations are captured without any
+  // IDE-level hook system.
+
+  if (sessionId) {
+    server.tool(
+      'record_observation',
+      'Record an observation into persistent memory. Call this automatically after every significant action: code changes, file reads, decisions, errors, or discoveries. The agent should record what happened so it can recall it in future sessions.',
+      {
+        kind: z
+          .enum(['note', 'user_prompt', 'tool_use', 'summary'])
+          .describe(
+            'The kind of observation. Use "note" for general observations, "user_prompt" for the user\'s request, "tool_use" for tool execution results, "summary" for turn summaries.',
+          ),
+        content: z
+          .string()
+          .min(1)
+          .describe('The observation content — write it in concise, factual terms.'),
+      },
+      async ({ kind, content }) => {
+        store.addObservation({
+          session_id: sessionId,
+          kind,
+          content,
+          metadata: { source: 'zed-mcp' },
+        });
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ ok: true }) }],
+        };
+      },
+    );
+  }
+
   return server;
 }
 
-export async function main(): Promise<void> {
+export async function main(opts?: { sessionId?: string }): Promise<void> {
   const settings = loadSettings();
   const dbPath = join(resolveDataDir(settings.dataDir), 'data.db');
   const store = new MemoryStore({ dbPath, settings });
 
-  const server = buildServer(store, settings);
+  const id = opts?.sessionId;
+  const server = buildServer(store, settings, id);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

@@ -18,6 +18,7 @@ import { deepMerge } from '../src/fs-utils.js';
 import { openCode } from '../src/opencode.js';
 import { getInstaller, installers } from '../src/registry.js';
 import type { InstallContext } from '../src/types.js';
+import { zed } from '../src/zed.js';
 
 let home: string;
 let originalHome: string | undefined;
@@ -52,7 +53,7 @@ afterEach(() => {
 describe('registry', () => {
   it('exposes all expected installers', () => {
     expect(Object.keys(installers).sort()).toEqual(
-      ['claude-code', 'codex', 'cursor', 'gemini-cli', 'opencode'].sort(),
+      ['claude-code', 'codex', 'cursor', 'gemini-cli', 'opencode', 'zed'].sort(),
     );
   });
   it('getInstaller throws on unknown id', () => {
@@ -135,7 +136,10 @@ describe('claude-code installer', () => {
             { hooks: [{ type: 'command', command: 'echo pre-existing-2' }] },
           ],
           PreToolUse: [
-            { matcher: 'Edit', hooks: [{ type: 'command', command: 'echo pre-existing-3' }] },
+            {
+              matcher: 'Edit',
+              hooks: [{ type: 'command', command: 'echo pre-existing-3' }],
+            },
           ],
           CustomEvent: [{ hooks: [{ type: 'command', command: 'noop' }] }],
         },
@@ -184,7 +188,9 @@ describe('claude-code installer', () => {
       mcpJsonPath(),
       JSON.stringify({
         userID: 'abc',
-        projects: { '/some/path': { mcpServers: { other: { command: '/x' } } } },
+        projects: {
+          '/some/path': { mcpServers: { other: { command: '/x' } } },
+        },
         mcpServers: { existing: { command: '/other/bin' } },
       }),
     );
@@ -508,5 +514,43 @@ describe('cursor installer', () => {
     await cursor.uninstall(ctx);
     const after = JSON.parse(readFileSync(p, 'utf8')) as typeof cfg;
     expect(after.mcpServers.cavemem).toBeUndefined();
+  });
+});
+
+describe('zed installer', () => {
+  it('writes zed settings.json and removes cleanly', async () => {
+    await zed.install(ctx);
+    const p = join(home, '.config', 'zed', 'settings.json');
+    expect(existsSync(p)).toBe(true);
+    const cfg = JSON.parse(readFileSync(p, 'utf8')) as {
+      context_servers: Record<string, { command: string; args?: string[] }>;
+    };
+    expect(cfg.context_servers.cavemem).toEqual({
+      command: ctx.nodeBin,
+      args: [ctx.cliPath, 'serve'],
+    });
+
+    await zed.uninstall(ctx);
+    const after = JSON.parse(readFileSync(p, 'utf8')) as typeof cfg;
+    expect(after.context_servers?.cavemem).toBeUndefined();
+  });
+
+  it('preserves user keys and non-cavemem context_servers on uninstall', async () => {
+    const dir = join(home, '.config', 'zed');
+    const { mkdirSync, writeFileSync } = await import('node:fs');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'settings.json'),
+      JSON.stringify({
+        theme: 'dark',
+        context_servers: { other: { command: 'foo' } },
+      }),
+    );
+
+    await zed.uninstall(ctx);
+    const after = JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'));
+    expect(after.theme).toBe('dark');
+    expect(after.context_servers.other.command).toBe('foo');
+    expect(after.context_servers.cavemem).toBeUndefined();
   });
 });
