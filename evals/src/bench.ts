@@ -1,8 +1,10 @@
 import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { compress, countTokens } from '@cavemem/compress';
 
-const corpusDir = join(import.meta.dirname, '..', 'corpus');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const corpusDir = join(__dirname, '..', 'corpus');
 const files = readdirSync(corpusDir).filter((f) => f.endsWith('.md'));
 
 let totalBefore = 0;

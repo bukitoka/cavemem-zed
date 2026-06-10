@@ -12,8 +12,6 @@ export interface CompressOptions {
   intensity?: Intensity;
 }
 
-const _WORD_BOUNDARY = /\b/;
-
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
